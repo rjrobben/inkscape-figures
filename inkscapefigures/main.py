@@ -32,14 +32,24 @@ def indent(text, indentation=0):
 def beautify(name):
     return name.replace('_', ' ').replace('-', ' ').title()
 
+def typst_template(name, title):
+    return '\n'.join((
+        r"#figure(",
+        rf'  image("figures/{name}.svg", width: 80%),',
+        rf"  caption: [{title}],",
+        rf") <fig:{name}>"))
+
 def latex_template(name, title):
     return '\n'.join((
         r"\begin{figure}[ht]",
         r"    \centering",
-        rf"    \incfig{{{name}}}",
+        rf"    \incfig[1]{{{name}}}",
         rf"    \caption{{{title}}}",
         rf"    \label{{fig:{name}}}",
         r"\end{figure}"))
+
+def markdown_template(name, title):
+    return f"![{title}](figures/{name}.svg)"
 
 # From https://stackoverflow.com/a/67692
 def import_file(name, path):
@@ -69,9 +79,28 @@ if not template.is_file():
     destination = str(template)
     copy(source, destination)
 
+# Default template handling
+default_format = 'typst'
+
 if config.exists():
     config_module = import_file('config', config)
-    latex_template = config_module.latex_template
+    if hasattr(config_module, 'typst_template'):
+        typst_template = config_module.typst_template
+    if hasattr(config_module, 'latex_template'):
+        latex_template = config_module.latex_template
+    if hasattr(config_module, 'markdown_template'):
+        markdown_template = config_module.markdown_template
+    if hasattr(config_module, 'default_format'):
+        default_format = config_module.default_format
+
+TEMPLATES = {
+    'typst': typst_template,
+    'latex': latex_template,
+    'markdown': markdown_template
+}
+
+# Selected template generator (will be set by CLI or default)
+template_generator = TEMPLATES.get(default_format, typst_template)
 
 
 def add_root(path):
@@ -95,10 +124,14 @@ def cli():
 
 @cli.command()
 @click.option('--daemon/--no-daemon', default=True)
-def watch(daemon):
+@click.option('--format', type=click.Choice(['typst', 'latex', 'markdown']), default=default_format, help='Output format for the template')
+def watch(daemon, format):
     """
     Watches for figures.
     """
+    global template_generator
+    template_generator = TEMPLATES[format]
+
     if platform.system() == 'Linux':
         watcher_cmd = watch_daemon_inotify
     else:
@@ -123,59 +156,14 @@ def maybe_recompile_figure(filepath):
             filepath.suffix))
         return
 
-    log.info('Recompiling %s', filepath)
-
-    pdf_path = filepath.parent / (filepath.stem + '.pdf')
+    log.info('Figure updated: %s', filepath)
     name = filepath.stem
 
-    inkscape_version = subprocess.check_output(['inkscape', '--version'], universal_newlines=True)
-    log.debug(inkscape_version)
-
-    # Convert
-    # - 'Inkscape 0.92.4 (unknown)' to [0, 92, 4]
-    # - 'Inkscape 1.1-dev (3a9df5bcce, 2020-03-18)' to [1, 1]
-    # - 'Inkscape 1.0rc1' to [1, 0]
-    inkscape_version = re.findall(r'[0-9.]+', inkscape_version)[0]
-    inkscape_version_number = [int(part) for part in inkscape_version.split('.')]
-
-    # Right-pad the array with zeros (so [1, 1] becomes [1, 1, 0])
-    inkscape_version_number= inkscape_version_number + [0] * (3 - len(inkscape_version_number))
-
-    # Tuple comparison is like version comparison
-    if inkscape_version_number < [1, 0, 0]:
-        command = [
-            'inkscape',
-            '--export-area-page',
-            '--export-dpi', '300',
-            '--export-pdf', pdf_path,
-            '--export-latex', filepath
-            ]
-    else:
-        command = [
-            'inkscape', filepath,
-            '--export-area-page',
-            '--export-dpi', '300',
-            '--export-type=pdf',
-            '--export-latex',
-            '--export-filename', pdf_path
-            ]
-
-    log.debug('Running command:')
-    log.debug(textwrap.indent(' '.join(str(e) for e in command), '    '))
-
-    # Recompile the svg file
-    completed_process = subprocess.run(command)
-
-    if completed_process.returncode != 0:
-        log.error('Return code %s', completed_process.returncode)
-    else:
-        log.debug('Command succeeded')
-
-    # Copy the LaTeX code to include the file to the clipboard
-    template = latex_template(name, beautify(name))
-    pyperclip.copy(template)
-    log.debug('Copying LaTeX template:')
-    log.debug(textwrap.indent(template, '    '))
+    # Copy the code to include the file to the clipboard
+    template_code = template_generator(name, beautify(name))
+    pyperclip.copy(template_code)
+    log.debug('Copying template:')
+    log.debug(textwrap.indent(template_code, '    '))
 
 def watch_daemon_inotify():
     import inotify.adapters
@@ -252,7 +240,8 @@ def watch_daemon_fswatch():
     default=os.getcwd(),
     type=click.Path(exists=False, file_okay=False, dir_okay=True)
 )
-def create(title, root):
+@click.option('--format', type=click.Choice(['typst', 'latex', 'markdown']), default=default_format, help='Output format for the template')
+def create(title, root, format):
     """
     Creates a figure.
 
@@ -280,7 +269,9 @@ def create(title, root):
     # Print the code for including the figure to stdout.
     # Copy the indentation of the input.
     leading_spaces = len(title) - len(title.lstrip())
-    print(indent(latex_template(figure_path.stem, title), indentation=leading_spaces))
+    
+    template_fn = TEMPLATES[format]
+    print(indent(template_fn(figure_path.stem, title), indentation=leading_spaces))
 
 @cli.command()
 @click.argument(
@@ -288,7 +279,8 @@ def create(title, root):
     default=os.getcwd(),
     type=click.Path(exists=True, file_okay=False, dir_okay=True)
 )
-def edit(root):
+@click.option('--format', type=click.Choice(['typst', 'latex', 'markdown']), default=default_format, help='Output format for the template')
+def edit(root, format):
     """
     Edits a figure.
 
@@ -309,11 +301,12 @@ def edit(root):
         add_root(figures)
         inkscape(path)
 
-        # Copy the LaTeX code to include the file to the clipboard
-        template = latex_template(path.stem, beautify(path.stem))
-        pyperclip.copy(template)
-        log.debug('Copying LaTeX template:')
-        log.debug(textwrap.indent(template, '    '))
+        # Copy the code to include the file to the clipboard
+        template_fn = TEMPLATES[format]
+        template_code = template_fn(path.stem, beautify(path.stem))
+        pyperclip.copy(template_code)
+        log.debug('Copying template:')
+        log.debug(textwrap.indent(template_code, '    '))
 
 if __name__ == '__main__':
     cli()

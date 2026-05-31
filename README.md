@@ -56,8 +56,8 @@ figures/
 ## Usage
 
 * Watch for figures: `inkscape-figures watch`.
-* Creating a figure: `inkscape-figures create 'title'`. This uses `~/.config/inkscape-figures/template.svg` as a template.
-* Creating a figure in a specific directory: `inkscape-figures create 'title' path/to/figures/`.
+* Creating a figure: `inkscape-figures create 'title' [--format <typst|latex|markdown>]`. This uses `~/.config/inkscape-figures/template.svg` as a template.
+* Creating a figure in a specific directory: `inkscape-figures create 'title' path/to/figures/ [--format <typst|latex|markdown>]`.
 * Select figure and edit it: `inkscape-figures edit`.
 * Select figure in a specific directory and edit it: `inkscape-figures edit path/to/figures/`.
 
@@ -86,15 +86,52 @@ To edit figures, press <kbd>Ctrl+F</kbd> in command mode, and a fuzzy search sel
 
 ## Configuration
 
-You can change the default LaTeX template by creating `~/.config/inkscape-figures/config.py` and adding something along the lines of the following:
+You can customize the behavior of `inkscape-figures` by creating `~/.config/inkscape-figures/config.py`.
+
+### Default Output Format
+
+You can set the default output format for the figure inclusion code (when `--format` is not specified) by adding `default_format` to your `config.py`:
+
+```python
+default_format = 'typst' # Can be 'typst', 'latex', or 'markdown'
+```
+
+### Custom Templates
+
+You can override the default templates for Typst, LaTeX, or Markdown by defining functions in `~/.config/inkscape-figures/config.py`.
+
+#### LaTeX Template
+
+To customize the LaTeX template:
 
 ```python
 def latex_template(name, title):
-    return '\n'.join((r"\begin{figure}[ht]",
-                      r"    This is a custom LaTeX template!",
-                      r"    \centering",
-                      rf"    \incfig[1]{{{name}}}",
-                      rf"    \caption{{{title}}}",
-                      rf"    \label{{fig:{name}}}",
-                      r"\end{figure}"))
+    return '\n'.join((r"\\begin{figure}[ht]",
+                      r"    \\centering",
+                      rf"    \\incfig[1]{{{name}}}",
+                      rf"    \\caption{{{title}}}",
+                      rf"    \\label{{fig:{name}}}",
+                      r"\\end{figure}"))
+```
+
+#### Markdown Template
+
+To customize the Markdown template:
+
+```python
+def markdown_template(name, title):
+    return f"![Custom {title}](path/to/figures/{name}.svg)"
+```
+
+#### Typst Template
+
+To customize the Typst template:
+
+```python
+def typst_template(name, title):
+    return '\n'.join((
+        r"#figure(",
+        rf'  image("figures/{name}.svg", width: 80%),',
+        rf"  caption: [{title}],",
+        rf") <fig:{name}>))
 ```
